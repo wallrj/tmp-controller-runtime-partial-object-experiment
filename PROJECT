@@ -3,4 +3,9 @@ layout:
 - go.kubebuilder.io/v3
 projectName: partial-object-watch
 repo: example.com/m
+resources:
+- controller: true
+  domain: my.domain
+  kind: Secret
+  version: v1
 version: "3"
