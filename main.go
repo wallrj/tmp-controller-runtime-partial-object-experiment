@@ -19,17 +19,21 @@ package main
 import (
 	"flag"
 	"os"
+	"strconv"
+
+	"go.uber.org/zap"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
+	"k8s.io/klog/v2"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	ctrlzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"example.com/m/controllers"
 	//+kubebuilder:scaffold:imports
@@ -55,13 +59,29 @@ func main() {
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
-	opts := zap.Options{
+	opts := ctrlzap.Options{
 		Development: true,
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
+	logr := ctrlzap.New(ctrlzap.UseFlagOptions(&opts))
 
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	atomlvl, ok := opts.Level.(zap.AtomicLevel)
+	if ok {
+		zaplvl := atomlvl.Level()
+		kloglvl := 0
+		if zaplvl < 0 {
+			kloglvl = -int(zaplvl)
+		}
+		dummy := flag.FlagSet{}
+		klog.InitFlags(&dummy)
+
+		// No way those can fail, so let's just ignore the errors.
+		_ = dummy.Set("v", strconv.Itoa(kloglvl))
+		_ = dummy.Parse(nil)
+	}
+	klog.SetLogger(logr)
+	ctrl.SetLogger(logr)
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
@@ -70,6 +90,7 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "95f0db32.my.domain",
+		Namespace:              "default",
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
