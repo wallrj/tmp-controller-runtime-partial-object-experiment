@@ -1,0 +1,6 @@
+domain: my.domain
+layout:
+- go.kubebuilder.io/v3
+projectName: partial-object-watch
+repo: example.com/m
+version: "3"
