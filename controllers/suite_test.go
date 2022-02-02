@@ -17,27 +17,65 @@ limitations under the License.
 package controllers
 
 import (
-	"path/filepath"
+	"context"
 	"testing"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/envtest/printer"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-	//+kubebuilder:scaffold:imports
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
-// These tests use Ginkgo (BDD-style Go testing framework). Refer to
-// http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
+var (
+	cfg        *rest.Config
+	k8sClient  client.Client
+	testEnv    *envtest.Environment
+	ctx        context.Context
+	cancel     context.CancelFunc
+	k8sManager manager.Manager
+)
 
-var cfg *rest.Config
-var k8sClient client.Client
-var testEnv *envtest.Environment
+var _ = Describe("Secret controller", func() {
+	const (
+		SecretName      = "test-secret"
+		SecretNamespace = "default"
+	)
+
+	Context("When Secrets are created", func() {
+		It("Should reconcile them all", func() {
+			By("Creating a Secret controller")
+			seen := make(chan string)
+			reconciler := &SecretReconciler{
+				Client: k8sManager.GetClient(),
+				Scheme: k8sManager.GetScheme(),
+				Seen:   seen,
+			}
+			Expect(reconciler.SetupWithManager(k8sManager)).To(Succeed())
+
+			Consistently(func() bool {
+				By("By creating a new Secret")
+				s1 := &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						GenerateName: SecretName,
+						Namespace:    SecretNamespace,
+					},
+				}
+				Expect(k8sClient.Create(ctx, s1)).Should(Succeed())
+				return Eventually(seen, "5s", "1s").Should(Receive(Equal(s1.Name)))
+
+			}, "10m", "30s").Should(BeTrue())
+		})
+	})
+})
 
 func TestAPIs(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -50,25 +88,34 @@ func TestAPIs(t *testing.T) {
 var _ = BeforeSuite(func() {
 	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
 
+	ctx, cancel = context.WithCancel(context.TODO())
+
 	By("bootstrapping test environment")
-	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "config", "crd", "bases")},
-		ErrorIfCRDPathMissing: false,
-	}
+	testEnv = &envtest.Environment{}
 
 	cfg, err := testEnv.Start()
 	Expect(err).NotTo(HaveOccurred())
 	Expect(cfg).NotTo(BeNil())
 
-	//+kubebuilder:scaffold:scheme
-
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
 
+	k8sManager, err = ctrl.NewManager(cfg, ctrl.Options{
+		Scheme: scheme.Scheme,
+	})
+	Expect(err).ToNot(HaveOccurred())
+
+	go func() {
+		defer GinkgoRecover()
+		err = k8sManager.Start(ctx)
+		Expect(err).ToNot(HaveOccurred(), "failed to run manager")
+	}()
+
 }, 60)
 
 var _ = AfterSuite(func() {
+	cancel()
 	By("tearing down the test environment")
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())

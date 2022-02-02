@@ -31,6 +31,7 @@ import (
 type SecretReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	Seen   chan string
 }
 
 //+kubebuilder:rbac:groups=my.domain,resources=secrets,verbs=get;list;watch;create;update;patch;delete
@@ -41,7 +42,7 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	logger := log.FromContext(ctx)
 
 	logger.Info("reconcile")
-
+	r.Seen <- req.Name
 	return ctrl.Result{}, nil
 }
 
